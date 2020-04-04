@@ -24,6 +24,7 @@ struct jack_backend_t
 static int jack_open(audio_backend_handle_t handle, char const* output_name, enum audio_direction direction, size_t buffer_size, struct stream_config_t const* config);
 static int jack_close(audio_backend_handle_t handle);
 static int jack_write(audio_backend_handle_t handle, char const* data, size_t nb_sample);
+static int jack_read(audio_backend_handle_t handle, char* data, size_t size);
 
 static int jack_process_cb(jack_nframes_t nframes, void* arg);
 static void jack_shutdown_cb(void* arg);
@@ -109,6 +110,7 @@ int jack_backend_init(audio_backend_handle_t* handle)
     jack_backend->parent.open               = jack_open;
     jack_backend->parent.close              = jack_close;
     jack_backend->parent.write              = jack_write;
+    jack_backend->parent.read               = jack_read;
 
     *handle = (audio_backend_handle_t)jack_backend;
 
@@ -239,6 +241,42 @@ int jack_write(audio_backend_handle_t handle, char const* data, size_t size)
     }
     
     jack_ringbuffer_write(jack_backend->ring_buffer, data, size);
+
+    return (ret < 0) ? ret : size;
+}
+
+int jack_read(audio_backend_handle_t handle, char* data, size_t size)
+{
+    int ret = 0;
+    struct jack_backend_t* const jack_backend = (struct jack_backend_t*)handle;
+
+    logger_log(LOG_DEBUG, "%s", __func__);
+
+    if ((handle == 0) || (data == 0))
+    {
+        logger_log(LOG_ERROR, "%s: handle or data pointer is null", __func__);
+        return -EINVAL;
+    }
+
+    if (jack_backend->jack_client == 0)
+    {
+        logger_log(LOG_ERROR, "%s: device not open", __func__);
+        return -ENODEV;
+    }
+
+    if (jack_backend->active == 0)
+    {
+        logger_log(LOG_DEBUG, "%s: server not active yet", __func__);
+        return size;
+    }
+
+    if (jack_ringbuffer_read_space(jack_backend->ring_buffer) < size)
+    {
+        logger_log(LOG_WARNING, "%s: short write", __func__);
+        return 0;
+    }
+    
+    jack_ringbuffer_read(jack_backend->ring_buffer, data, size);
 
     return (ret < 0) ? ret : size;
 }
